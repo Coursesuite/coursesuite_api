@@ -28,7 +28,7 @@ To send the course back to Moodle from the apps, click the Publish button on the
 
 ## Example
 
-[![Watch the video](https://img.youtube.com/vi/zhRSFztxWkI/maxresdefault.jpg)](https://youtu.be/zhRSFztxWkI)
+[![Watch the video](https://img.youtube.com/vi/zhRSFztxWkI/hqdefault.jpg)](https://youtu.be/zhRSFztxWkI)
 
 ## Licence
 
