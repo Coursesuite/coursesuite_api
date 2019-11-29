@@ -1,0 +1,8 @@
+.block.block_coursesuite_api .unlist .column {
+	display: inline-block;
+}
+
+.block.block_coursesuite_api .unlist .column.icon > img.icon {
+	width: 24px;
+	height: 24px;
+}
