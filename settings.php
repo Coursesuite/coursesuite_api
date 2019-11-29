@@ -21,12 +21,13 @@ $settings->add(new admin_setting_configpasswordunmask(
             PARAM_NOTAGS
         ));
 
-$opts = array('accepted_types' => array('.mbz'));
-$settings->add(new admin_setting_configstoredfile(
-        'coursesuite_api/coursebackup',
-        get_string('labelbackup', 'block_coursesuite_api'),
-        get_string('descbackup', 'block_coursesuite_api'),
-        'backup',
-        0,
-        $opts
-    ));
+//
+// $opts = array('accepted_types' => array('.mbz'));
+// $settings->add(new admin_setting_configstoredfile(
+//         'coursesuite_api/coursebackup',
+//         get_string('labelbackup', 'block_coursesuite_api'),
+//         get_string('descbackup', 'block_coursesuite_api'),
+//         'backup',
+//         0,
+//         $opts
+//     ));
