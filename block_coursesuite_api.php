@@ -24,6 +24,7 @@ class block_coursesuite_api extends block_list { // base {
 	}
 
 	public function get_content() {
+		global $OUTPUT;
 	    if ($this->content !== null) {
 	      return $this->content;
 	    }
@@ -33,15 +34,17 @@ class block_coursesuite_api extends block_list { // base {
 	    }
 
 	    $cache = get_config('coursesuite_api', 'cache');
-	    // $token = get_config('coursesuite_api', 'token');
+  		if (empty($cache)) {
+  			$this->precache();
+  		}
 
 	    $this->content         =  new stdClass;
   		$this->content->items  = array();
   		$this->content->icons  = array();
 
   	    if (empty($cache)) {
-	    	$this->content->items[] = 'Please configure the block and save to continue';
-	    	$this->content->icons[] = html_writer::empty_tag('img', array('src' => 'about:blank', 'class' => 'icon'));
+	    	$this->content->items[] = 'An API error occurred';
+	    	$this->content->icons[] = $OUTPUT->pix_icon('i/risk_xss', get_string('error')); // html_writer::empty_tag('img', array('src' => 'about:blank', 'class' => 'icon'));
 		} else {
 	        $lightbox = 'function e(){return Array.from(document.querySelectorAll("body *")).map(function(a){return parseFloat(window.getComputedStyle(a).zIndex)}).filter(function(a){return!isNaN(a)}).sort(function(a,b){return a-b}).pop()}function f(a){a&&a.preventDefault();var b=document.createElement("div"),d=document.createElement("iframe"),c=document.createElement("div");o="cs-overlay";if(x=document.querySelector("#"+o))return document.body.style.overflow="auto",document.body.removeChild(x),location.href=location.href,!1;b.id=o;b.style="position:fixed;top:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:"+e()+1;b.appendChild(d);d.style="position:absolute;width:90%;height:90%;left:5%;top:5%";d.src=a.target.href;d.setAttribute("allow","microphone; camera; fullscreen;");d.setAttribute("allowfullscreen",true);c.style="position:absolute;top:calc(5% - 24px);left:96%;width:24px;height:24px;cursor:pointer";c.innerHTML="<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path stroke=\"white\" d=\"M0 0l24 24M0 24L24 0\"/></svg>";c.onclick=f;b.appendChild(c);document.body.appendChild(b);document.body.style.overflow="hidden";return 1};return f(event);';
 	        $cache = json_decode($cache);
@@ -81,43 +84,48 @@ class block_coursesuite_api extends block_list { // base {
 	    }
 	}
 
+	/*
+	*	Phone Home to coursesuite api site and gather launch information based on apikey
+	*/
+	private function precache() {
+
+		$apihost = "https://www.coursesuite.ninja";
+		$host = $_SERVER['HTTP_HOST'];
+
+		$c = new curl(["debug"=>false,"cache"=>true]);
+
+		$headers = array();
+		$headers[] = "Authorization: Bearer: {$apikey}";
+		$c->setHeader($headers);
+
+		$options = array();
+		$options["CURLOPT_RETURNTRANSFER"] = true;
+
+		if (strpos($host, ".test")!==false) { // override endpoint in test environment
+			$apihost = "https://coursesuite.ninja.test";
+            $options["CURLOPT_SSL_VERIFYHOST"] = false;
+            $options["CURLOPT_SSL_VERIFYPEER"] = false;
+        }
+
+		$c->setopt($options);
+
+		$response =  $c->post($apihost . "/api/info/");
+		$info = $c->get_info();
+		if (!empty($info['http_code']) && $info['http_code'] === 200) {
+		    set_config("cache", $response, "coursesuite_api");
+		} else if ($CFG->debugdisplay) {
+			debugging(print_r($info,true));
+		}
+
+	}
+
 	// configure the block -> save
 	public function instance_config_save($data,$nolongerused =false) {
 		global $CFG;
 
 		$apikey = get_config('coursesuite_api', 'apikey');
 		if (!empty($apikey)) {
-
-			// cache app names this apikey can access
-
-			$apihost = "https://www.coursesuite.ninja";
-			$host = $_SERVER['HTTP_HOST'];
-
-			$c = new curl(["debug"=>false,"cache"=>true]);
-
-			$headers = array();
-			$headers[] = "Authorization: Bearer: {$apikey}";
-			$c->setHeader($headers);
-
-			$options = array();
-			$options["CURLOPT_RETURNTRANSFER"] = true;
-
-			if (strpos($host, ".test")!==false) {
-				$apihost = "https://coursesuite.ninja.test";
-	            $options["CURLOPT_SSL_VERIFYHOST"] = false;
-	            $options["CURLOPT_SSL_VERIFYPEER"] = false;
-	        }
-
-			$c->setopt($options);
-
-			$response =  $c->post($apihost . "/api/info/");
-			$info = $c->get_info();
-			if (!empty($info['http_code']) && $info['http_code'] === 200) {
-			    set_config("cache", $response, "coursesuite_api");
-			} else if ($CFG->debugdisplay) {
-				debugging(print_r($info,true));
-			}
-
+			$this->precache();
 		}
 
 		// And now forward to the default implementation defined in the parent class
