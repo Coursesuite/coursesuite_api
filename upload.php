@@ -45,7 +45,7 @@ $expected_bearer_token = md5($apikey . $apisecret);
 $categoryid = optional_param('categoryid', 1, PARAM_INT);
 $ping = optional_param('ping', 0, PARAM_INT);
 
-if ($ping === 1) die("pong"); // for externally testing to see if this file exists
+if ($ping === 1) die("pong"); // for externally testing to see if this file exists and is who we expect it to be
 
 $bearer = null;
 $method = 0;
@@ -264,6 +264,12 @@ $result = [
 header("Content-Type: application/json");
 echo json_encode($result);
 
+// debug:
+if (debugging()) {
+    $log = implode(PHP_EOL, ["method=$method", "apikey=$apikey", "bearer=$bearer", "raw=$raw", "files=$files",  "uploads=$uploads", "CategoryId=$categoryid", "ContentHash=$contenthash", "backup-filename=$backup_filename", "result=" . print_r($result,true), "-----",""]);
+    file_put_contents($api_folder . "upload_log.txt", $log, FILE_APPEND);
+}
+
 die();
 
 
@@ -421,7 +427,3 @@ function replace_between($str, $tag, $replacement) {
 }
 
 
-// debug:
-// $log = implode(PHP_EOL, ["method=$method", "apikey=$apikey", "bearer=$bearer", "raw=$raw", "files=$files",  "uploads=$uploads","-----",""]);
-// $log = PHP_EOL . "CategoryId=$categoryid, ContentHash=$contenthash, backup-filename=$backup_filename, log=$logg" . PHP_EOL;
-// file_put_contents($dest . "upload_log.txt", $log, FILE_APPEND);
