@@ -25,9 +25,13 @@
  */
 
 // come one, come all
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: PUT, POST, GET');
-header('Access-Control-Allow-Headers: X-Requested-With, X-Filename, Authorization');
+$requestmethod = $_SERVER['REQUEST_METHOD'];
+if ($requestmethod == 'OPTIONS') {
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: PUT, POST, GET');
+    header('Access-Control-Allow-Headers: X-Requested-With, X-Filename, Authorization, Content-Length, Content-Type');
+    die();
+}
 
 require_once('../../config.php');
 
@@ -36,16 +40,34 @@ require_once($CFG->libdir.'/filestorage/zip_packer.php');
 require_once($CFG->dirroot.'/backup/util/includes/restore_includes.php');
 // require_once($CFG->dirroot.'/mod/scorm/locallib.php');
 
+function stop($message, $code = 200) {
+    write_to_log("stop({$message}, {$code})");
+    http_response_code($code);
+    die($message);
+}
+
+function write_to_log($message) {
+    global $CFG;
+    file_put_contents($CFG->dataroot . '/temp/coursesuite_api/upload.log', date("Y-m-d H:i:s".substr((string)microtime(), 1, 8)." e\: ") . $message . PHP_EOL, FILE_APPEND);
+}
+
 defined('MOODLE_INTERNAL') || die();
 
-$apikey = get_config('coursesuite_api', 'apikey');
-$apisecret = get_config('coursesuite_api', 'secretkey');
+$apikey         = get_config('coursesuite_api', 'apikey');
+$apisecret      = get_config('coursesuite_api', 'secretkey');
+
+$categoryid     = optional_param('categoryid', 1, PARAM_INT);
+$ping           = optional_param('ping', 0, PARAM_INT);
+
+// save the incoming file and any logs into a temporary folder
+$api_folder = $CFG->dataroot . '/temp/coursesuite_api/';
+if (!file_exists($api_folder)) mkdir($api_folder, 0777, true);
+
+// since this file is unauthenticated, we need to validate the incoming request
+// the bearer token must match this or we ignore the request
 $expected_bearer_token = md5($apikey . $apisecret);
 
-$categoryid = optional_param('categoryid', 1, PARAM_INT);
-$ping = optional_param('ping', 0, PARAM_INT);
-
-if ($ping === 1) die("pong"); // for externally testing to see if this file exists and is who we expect it to be
+if ($ping === 1) stop("pong"); // for externally testing to see if this file exists and is who we expect it to be
 
 $bearer = null;
 $method = 0;
@@ -68,60 +90,69 @@ if (isset($_SERVER['Authorization'])) {
     }
 }
 
+write_to_log("Bearer: {$bearer}, Method: {$method}");
+
 // if there is no bearer token then stop now
-if (empty($bearer)) die("-1");
+if (empty($bearer)) stop("-1");
 
 // is the bearer specified the correct format?
 $bearer = str_ireplace(['Bearer: ','Bearer '], '', $bearer);
-if (!preg_match('/^[a-f0-9]{32}$/', $bearer)) die("-2");
+if (!preg_match('/^[a-f0-9]{32}$/', $bearer)) stop("-2");
 
 // does the bearer match the expected value?
-if (strcasecmp($bearer,$expected_bearer_token) !== 0) die("-3");
+if (strcasecmp($bearer,$expected_bearer_token) !== 0) stop("-3");
 
-// save the incoming file into a temporary folder
-$api_folder = $CFG->dataroot . '/temp/coursesuite_api/'; // kinda unneccesary
-if (!file_exists($api_folder)) mkdir($api_folder, 0777, true);
-$method = $_SERVER['REQUEST_METHOD'];
 $uploaded_file = '';
 
-// debug:
-// $raw = print_r($_SERVER, true);
-// $files = print_r($_FILES, true);
+write_to_log($requestmethod);
 
-if ($method == 'POST') { // direct from app
+if ($requestmethod === 'POST') { // direct from app
 
     foreach ($_FILES as $file) { // should only be 1 anyway
-        $out = $api_folder . basename($file["name"]) . ".zip";
-        if (file_exists($out)) unlink($out); // overwrite
-        move_uploaded_file($file["tmp_name"], $out);
-        $uploaded_file = $out;
-        // $uploads = "post " . $file["tmp_name"] . " to " . $out;
+        $uploaded_file = basename($file["name"],".zip");
+        if (empty($uploaded_file)) $uploaded_file = md5(time());
+        $uploaded_file = $api_folder . $uploaded_file . ".zip";
+        if (file_exists($uploaded_file)) unlink($uploaded_file); // overwrite
+        write_to_log("POST " . $file["tmp_name"] ." (" . $file["size"] .") to " . $uploaded_file);
+        move_uploaded_file($file["tmp_name"], $uploaded_file);
     }
 
-} elseif ($method == 'PUT') { // generally from curl proxy, e.g. publish.php
+} elseif ($requestmethod === 'PUT') { // generally from curl proxy, e.g. publish.php
 
-    $filename = basename($_SERVER['HTTP_X_FILENAME']); // don't accept paths
-    $dest = $api_folder . $filename . ".zip";
-    if (file_exists($dest)) unlink($dest); // overwrite
-    // $uploads = "put " . $filename . " to " . $dest;
+    $uploaded_file = basename($_SERVER['HTTP_X_FILENAME'],".zip"); // don't accept paths
+    if (empty($uploaded_file)) $uploaded_file = md5(time());
+    $uploaded_file = $api_folder . $uploaded_file . ".zip";
+    if (file_exists($uploaded_file)) unlink($uploaded_file); // overwrite
     $in = fopen('php://input','r');
-    $out = fopen($dest,'w');
-    $uploaded_file = $out;
-    stream_copy_to_stream($in,$out);
-    // file_put_contents($dest, file_get_contents('php://input'));
+    $out = fopen($uploaded_file,'w');
+    $size = 0;
+    while (!feof($in)) $size += fwrite($out,fread($in,8192));
+    write_to_log("PUT {$size} bytes to {$uploaded_file}");
+   // stream_copy_to_stream($in,$out);
+
+} else {
+
+    stop("Method {$requestmethod} not allowed", 405);
+
 }
 
 // extract the manifest from the package
 // designed for coursesuite course manifests in mind; may not work for general scorm
-$zipname = basename($out);
+if (filesize($uploaded_file) === 0) stop("Bad filesize");
 $temp_folder = $api_folder . md5(mt_rand() . time());
 mkdir($temp_folder,0777);
+
 $zip = new ZipArchive;
-$zip->open($out);
+$zip->open($uploaded_file);
 $zip->extractTo($temp_folder, 'imsmanifest.xml');
 $zip->close();
 $manifestObj = loadManifestObject($temp_folder);
+
+write_to_log($temp_folder);
+write_to_log(print_r($manifestObj, true));
+
 delTree($temp_folder);
+
 $title = $manifestObj["manifest"]["organizations"]["organization"]["title"];
 $launch = $manifestObj["manifest"]["resources"]["resource"]["@href"];
 $identifier = str_replace("ORG-", "", $manifestObj["manifest"]["organizations"]["@default"]);
@@ -156,9 +187,11 @@ extract_backup("./db/backup.mbz", $temp_folder);
 //delTree($temp_folder . "/files/da");
 
 // move the package into the files area
-$contenthash = sha1_file($out);
-$contentsize = filesize($out);
+$zipname = basename($uploaded_file);
+$contenthash = sha1_file($uploaded_file);
+$contentsize = filesize($uploaded_file);
 $timestamp = time();
+
 $filespath = $temp_folder . "/files/" . substr($contenthash, 0, 2) . "/";
 if (!file_exists($filespath)) mkdir($filespath,0777);
 rename($uploaded_file, $filespath . $contenthash);
@@ -174,14 +207,14 @@ $files_xml = <<<EOT
     <filearea>package</filearea>
     <itemid>0</itemid>
     <filepath>/</filepath>
-    <filename>{$zipname}.zip</filename>
+    <filename>{$zipname}</filename>
     <userid>2</userid>
     <filesize>{$contentsize}</filesize>
     <mimetype>application/zip</mimetype>
     <status>0</status>
     <timecreated>1574638284</timecreated>
     <timemodified>{$timestamp}</timemodified>
-    <source>{$zipname}.zip</source>
+    <source>{$zipname}</source>
     <author>Coursesuite API</author>
     <license>allrightsreserved</license>
     <sortorder>0</sortorder>
@@ -221,7 +254,7 @@ $xml = replace_between($xml, "sha1hash", $contenthash);
 $xml = replace_between($xml, "name", $fullname);
 $xml = replace_between($xml, "title", $title);
 $xml = replace_between($xml, "manifest", $identifier);
-$xml = replace_between($xml, "reference", "{$zipname}.zip");
+$xml = replace_between($xml, "reference", $zipname);
 $xml = replace_between($xml, "version", "SCORM_{$version}");
 $xml = str_replace("<launch>dummySCO.htm</launch>", "<launch>{$launch}</launch>", $xml);
 $xml = replace_between($xml, "updatefreq", 3); // means we don't have to do a scorm_parse here
@@ -251,7 +284,7 @@ file_put_contents($temp_folder ."/moodle_backup.xml", $xml);
 $courseid = restore_course($backup_folder_name, $categoryid);
 
 // delTree($temp_folder); // the controller does this anyway
-@unlink($out); // the zip file can be trashed though
+// @unlink($uploaded_file); // the zip file can be trashed though
 
 $result = [
     "statuscode" => 0,
@@ -264,13 +297,9 @@ $result = [
 header("Content-Type: application/json");
 echo json_encode($result);
 
-// debug:
-if (debugging()) {
-    $log = implode(PHP_EOL, ["method=$method", "apikey=$apikey", "bearer=$bearer", "raw=$raw", "files=$files",  "uploads=$uploads", "CategoryId=$categoryid", "ContentHash=$contenthash", "backup-filename=$backup_filename", "result=" . print_r($result,true), "-----",""]);
-    file_put_contents($api_folder . "upload_log.txt", $log, FILE_APPEND);
-}
+write_to_log($result);
 
-die();
+stop("");
 
 
 
@@ -326,7 +355,14 @@ function xmlToArray($xml, $options = array()) {
         foreach ($xml->children($namespace) as $childXml) {
             //recurse into child nodes
             $childArray = xmlToArray($childXml, $options);
-            list($childTagName, $childProperties) = each($childArray);
+            // list($childTagName, $childProperties) = each($childArray)
+            $childTagName = key($childArray);
+            $childProperties = $childArray[$childTagName];
+            //var_dump($childTagName, $childProperties);
+            // foreach ($childArray as $caKey => $caValue) {
+            //     $childTagName = $caKey;
+            //     $childProperties = $caValue;
+            // }
 
             //replace characters in tag name
             if ($options['keySearch']) $childTagName =
