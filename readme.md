@@ -16,6 +16,12 @@ Settings for the app are under `Site Administration > Plugins > Blocks > Courses
 
 Enter the API KEY and SECRET KEY into the settings.
 
+The HTTP_AUTHORIZATION header needs to be passed through for this web server. You may need your web server administrators\' assistance to set the values as below:
+
+*nginx*: `fastcgi_param HTTP_AUTHORIZATION $http_authorization;`
+
+*apache*: `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`
+
 ## Setting up & using the block
 
 1. enable editing
