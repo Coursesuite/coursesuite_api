@@ -1,4 +1,27 @@
 <?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+
+/**
+ * main block renderer for coursesuite_api block.
+ *
+ * @package    block_coursesuite_api
+ * @copyright  2020 tim st.clair
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
 class block_coursesuite_api extends block_list { // base {
 
     public function init() {
@@ -33,16 +56,13 @@ class block_coursesuite_api extends block_list { // base {
             return null;
         }
 
-        $cache = get_config('coursesuite_api', 'cache');
-        if (empty($cache)) {
-            $this->precache();
-        }
+        $cache = $this->get_cache();
 
         $this->content         =  new stdClass;
         $this->content->items  = array();
         $this->content->icons  = array();
 
-        if (empty($cache)) {
+        if (!$cache) { // false or empty
             $this->content->items[] = 'An API error occurred';
             $this->content->icons[] = $OUTPUT->pix_icon('i/risk_xss', get_string('error')); // html_writer::empty_tag('img', array('src' => 'about:blank', 'class' => 'icon'));
         } else {
@@ -56,7 +76,7 @@ class block_coursesuite_api extends block_list { // base {
                 // $url = str_replace('{token}', $token, $app->launch) . 'moodle/';
                 $url = new moodle_url("/blocks/coursesuite_api/launch.php", array("categoryid" => $categoryid, "app" => $app->app_key));
                 $this->content->items[] = html_writer::tag('a', $app->name, array('href' => $url, 'target' => $app->app_key, 'onclick' => $lightbox));
-                $this->content->icons[] = html_writer::empty_tag('img', array('src' => 'data:image/svg+xml;utf8,' . $app->glyph, 'class' => 'icon'));
+                $this->content->icons[] = html_writer::empty_tag('img', array('src' => 'data:image/svg+xml;base64,' . base64_encode($app->glyph), 'class' => 'icon')); // utf8,' . $app->glyph -> leads to misquoting and image breaks
             }
         }
 
@@ -87,45 +107,60 @@ class block_coursesuite_api extends block_list { // base {
     /*
     *   Phone Home to coursesuite api site and gather launch information based on apikey
     */
-    private function precache() {
+    private function get_cache() {
+        global $CFG;
 
-        $apihost = "https://www.coursesuite.ninja";
-        $host = $_SERVER['HTTP_HOST'];
-        $c = new curl(["debug"=>false,"cache"=>true]);
+        $cache = get_config('coursesuite_api', 'cache');
+        $debug_mode = (get_config('coursesuite_api', 'debug') === '1');
 
-        $headers = array();
-        $headers[] = "Authorization: Bearer: {$apikey}";
-        $c->setHeader($headers);
+        if (empty($cache) || $debug_mode) {
 
-        $options = array();
-        $options["CURLOPT_RETURNTRANSFER"] = true;
+            $apikey = get_config('coursesuite_api', 'apikey');
+            if (empty($apikey)) return false;
 
-        if (strpos($host, ".test")!==false) { // override endpoint in test environment
-            $apihost = "https://coursesuite.ninja.test";
-            $options["CURLOPT_SSL_VERIFYHOST"] = false;
-            $options["CURLOPT_SSL_VERIFYPEER"] = false;
+            $apihost = "https://www.coursesuite.ninja";
+            $host = $_SERVER['HTTP_HOST'];
+            $c = new curl(["debug" => $debug_mode, "cache"=>true]);
+
+            $headers = array();
+            $headers[] = "Authorization: Bearer: {$apikey}";
+            $c->setHeader($headers);
+
+            $options = array();
+            $options["CURLOPT_RETURNTRANSFER"] = true;
+
+            if (strpos($host, ".test") !== false) { // override endpoint in test environment
+                $apihost = "https://coursesuite.ninja.test";
+                $options["CURLOPT_SSL_VERIFYHOST"] = false;
+                $options["CURLOPT_SSL_VERIFYPEER"] = false;
+            }
+
+            $c->setopt($options);
+
+            $response = $c->post($apihost . "/api/info/");
+            $info = $c->get_info();
+            if (!empty($info['http_code']) && $info['http_code'] === 200) {
+
+                $cache = $response;
+                set_config("cache", $cache, "coursesuite_api");
+
+            } else {
+                if ($debug_mode) {
+                    debugging(print_r($info,true));
+                }
+                return false;
+            }
         }
 
-        $c->setopt($options);
-
-        $response =  $c->post($apihost . "/api/info/");
-        $info = $c->get_info();
-        if (!empty($info['http_code']) && $info['http_code'] === 200) {
-            set_config("cache", $response, "coursesuite_api");
-        } else if ($CFG->debugdisplay) {
-            debugging(print_r($info,true));
-        }
+        return $cache;
 
     }
 
     // configure the block -> save
     public function instance_config_save($data,$nolongerused =false) {
-        global $CFG;
 
-        $apikey = get_config('coursesuite_api', 'apikey');
-        if (!empty($apikey)) {
-            $this->precache();
-        }
+        // reset cache
+        unset_config('cache', 'coursesuite_api');
 
         // And now forward to the default implementation defined in the parent class
         return parent::instance_config_save($data,$nolongerused);
